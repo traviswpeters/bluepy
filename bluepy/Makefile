@@ -33,21 +33,21 @@ $(IMPORT_SRCS): bluez-src.tgz
 	tar xzf $<
 	touch $(IMPORT_SRCS)
 
-.PHONY: bluez-tarfile
+.PHONY: bluez-tarfile uuids
 
 bluez-tarfile:
 	(cd ..; tar czf bluepy/bluez-src.tgz $(BLUEZ_PATH))
 
 GET_SERVICES=get_services.py
 
-uuids.json: $(GET_SERVICES)
+uuids:
 	python $(GET_SERVICES) > uuids.json
+
+# uuids.json: $(GET_SERVICES)
+# 	python $(GET_SERVICES) > uuids.json
 
 TAGS: *.c $(BLUEZ_PATH)/attrib/*.[ch] $(BLUEZ_PATH)/btio/*.[ch]
 	etags $^
 
 clean:
 	rm -rf *.o bluepy-helper TAGS $(BLUEZ_PATH)
-
-
-
