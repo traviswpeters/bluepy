@@ -12,12 +12,20 @@ import select
 import struct
 import signal
 
+
 def preexec_function():
     # Ignore the SIGINT signal by setting the handler to the standard
     # signal handler SIG_IGN.
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
+
+###
+### Globals & Defaults
+###
+
+
 Debugging = False
+
 script_path = os.path.join(os.path.abspath(os.path.dirname(__file__)))
 helperExe = os.path.join(script_path, "bluepy-helper")
 
@@ -27,6 +35,12 @@ SEC_LEVEL_HIGH = "high"
 
 ADDR_TYPE_PUBLIC = "public"
 ADDR_TYPE_RANDOM = "random"
+
+
+###
+### Debugging and Custom Error Handlers
+###
+
 
 def DBG(*args):
     if Debugging:
@@ -82,11 +96,18 @@ class BTLEGattError(BTLEException):
         BTLEException.__init__(self, message, rsp)
 
 
+###
+### Assigned Numbers & UUID-related code
+###
+
 
 class UUID:
-    def __init__(self, val, commonName=None):
+    def __init__(self, val, commonName=None, specification=None):
         '''We accept: 32-digit hex strings, with and without '-' characters,
            4 to 8 digit hex strings, and integers'''
+        self.decVal = val
+        self.specification = specification
+
         if isinstance(val, int):
             if (val < 0) or (val > 0xFFFFFFFF):
                 raise ValueError(
@@ -132,6 +153,89 @@ class UUID:
                 s = s[4:]
         return s
 
+    def getShortUUID(self):
+        s = str(self)
+        if s.endswith("-0000-1000-8000-00805f9b34fb"): # standard suffix
+            s = s[0:8]
+            if s.startswith("0000"): # standard prefix
+                s = s[4:]
+        if (len(s) == 4):
+            return s
+        else:
+            return '----'
+
+    @property
+    def short(self):
+        return self.getShortUUID()
+
+    def getVerboseStr(self):
+        # complete UUID | short form UUID | decimal value | member specification | name (human-readable)
+        return f"{self} | 0x{self.short} | {self.decVal} | {self.specification} | {self.getCommonName()}"
+
+
+def capitaliseName(descr):
+    words = descr.replace("("," ").replace(")"," ").replace('-',' ').split(" ")
+    capWords =  [ words[0].lower() ]
+    capWords += [ w[0:1].upper() + w[1:].lower() for w in words[1:] ]
+    return "".join(capWords)
+
+
+class _UUIDNameMap:
+
+    def __init__(self, idList):
+        self.idMap = {}
+
+        for uuid in idList:
+            attrName = capitaliseName(uuid.commonName)
+            vars(self) [attrName] = uuid
+            self.idMap[uuid] = uuid
+
+    def getCommonName(self, uuid):
+        if uuid in self.idMap:
+            return self.idMap[uuid].commonName
+        return None
+
+    def dumpUUIDs(self):
+        for i, uuid in enumerate(self.idMap):
+            print(f"{i+1:0>3}: {uuid.getVerboseStr()}")
+        print(f"Total = {len(self.idMap)} Assigned Numbers loaded")
+
+def get_json_uuid():
+    """
+    Read uuids.json and load Assigned Numbers information from the official Bluetooth website.
+
+    Primary Keys in uuids.json:
+
+        characteristic_UUIDs
+        declaration_UUIDs
+        descriptor_UUIDs
+        service_UUIDs
+        units_UUIDs
+
+    Secondary objects under each primary key---a list of lists:
+
+        [ number (decimal), common name/uniform type identifier, name (human-readable) ]
+
+    """
+    import json
+
+    with open(os.path.join(script_path, 'uuids.json'), "rb") as fp:
+        uuid_data = json.loads(fp.read().decode("utf-8"))
+
+    for k in uuid_data.keys():
+        # print(k) # primary key
+        for number,cname,name in uuid_data[k]:
+            # print(number, cname, name) # secondary data object
+            yield UUID(number, cname, specification=k)
+            yield UUID(number, name, specification=k)
+
+AssignedNumbers = _UUIDNameMap( get_json_uuid() )
+
+###
+### Devices & Scanning
+###
+
+
 class Service:
     def __init__(self, *args):
         (self.peripheral, uuidVal, self.hndStart, self.hndEnd) = args
@@ -161,9 +265,7 @@ class Service:
         return self.descs
 
     def __str__(self):
-        return "Service <uuid=%s handleStart=%s handleEnd=%s>" % (self.uuid.getCommonName(),
-                                                                 self.hndStart,
-                                                                 self.hndEnd)
+        return f"Srvc <{self.uuid}> <{self.uuid.getShortUUID()}> ({self.uuid.getCommonName()}) / handleStart=0x{self.hndStart:04x} / handleEnd=0x{self.hndEnd:04x}"
 
 class Characteristic:
     # Currently only READ is used in supportsRead function,
@@ -216,7 +318,7 @@ class Characteristic:
         return self.descs
 
     def __str__(self):
-        return "Characteristic <%s>" % self.uuid.getCommonName()
+        return f"Char <{self.uuid}> <{self.uuid.getShortUUID()}> ({self.uuid.getCommonName()}) / handle=0x{self.handle:04x} / properties=0b{self.properties:08b} ({self.propertiesToString()}) / valHandle=0x{self.valHandle:04x}"
 
     def supportsRead(self):
         if (self.properties & Characteristic.props["READ"]):
@@ -224,12 +326,12 @@ class Characteristic:
         else:
             return False
 
-    def propertiesToString(self):
-        propStr = ""
+    def propertiesToString(self, delim='|'):
+        props = []
         for p in Characteristic.propNames:
            if (p & self.properties):
-               propStr += Characteristic.propNames[p] + " "
-        return propStr
+               props.append( Characteristic.propNames[p] )
+        return delim.join(props)
 
     def getHandle(self):
         return self.valHandle
@@ -240,14 +342,19 @@ class Descriptor:
         self.uuid = UUID(uuidVal)
 
     def __str__(self):
-        return "Descriptor <%s>" % self.uuid.getCommonName()
-
+        return f"Desc <{self.uuid}> <{self.uuid.getShortUUID()}> ({self.uuid.getCommonName()}) / handle=0x{self.handle:04x}"
 
     def read(self):
         return self.peripheral.readCharacteristic(self.handle)
 
     def write(self, val, withResponse=False):
         self.peripheral.writeCharacteristic(self.handle, val, withResponse)
+
+
+###
+### Devices & Scanning
+###
+
 
 class DefaultDelegate:
     def __init__(self):
@@ -457,6 +564,7 @@ class Peripheral(BluepyHelper):
     def discoverServices(self):
         self._writeCmd("svcs\n")
         rsp = self._getResp('find')
+        # DBG(rsp)
         starts = rsp['hstart']
         ends   = rsp['hend']
         uuids  = rsp['uuid']
@@ -855,39 +963,10 @@ class Scanner(BluepyHelper):
         return self.getDevices()
 
 
-def capitaliseName(descr):
-    words = descr.replace("("," ").replace(")"," ").replace('-',' ').split(" ")
-    capWords =  [ words[0].lower() ]
-    capWords += [ w[0:1].upper() + w[1:].lower() for w in words[1:] ]
-    return "".join(capWords)
+###
+### Main
+###
 
-class _UUIDNameMap:
-
-    def __init__(self, idList):
-        self.idMap = {}
-
-        for uuid in idList:
-            attrName = capitaliseName(uuid.commonName)
-            vars(self) [attrName] = uuid
-            self.idMap[uuid] = uuid
-
-    def getCommonName(self, uuid):
-        if uuid in self.idMap:
-            return self.idMap[uuid].commonName
-        return None
-
-def get_json_uuid():
-    import json
-
-    with open(os.path.join(script_path, 'uuids.json'), "rb") as fp:
-        uuid_data = json.loads(fp.read().decode("utf-8"))
-
-    for k in uuid_data.keys():
-        for number,cname,name in uuid_data[k]:
-            yield UUID(number, cname)
-            yield UUID(number, name)
-
-AssignedNumbers = _UUIDNameMap( get_json_uuid() )
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:

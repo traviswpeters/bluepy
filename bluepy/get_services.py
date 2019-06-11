@@ -246,8 +246,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug', '-d', action='count', default=0, help='show debug output')
     args = parser.parse_args()
 
-    if args.debug > 0:
-        DEBUG = True
+    DEBUG = args.debug > 0
 
     d = Definitions()
     s = json.dumps(d.data(),
