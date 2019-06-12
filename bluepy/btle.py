@@ -36,6 +36,25 @@ SEC_LEVEL_HIGH = "high"
 ADDR_TYPE_PUBLIC = "public"
 ADDR_TYPE_RANDOM = "random"
 
+def bin_format(integer, length=8):
+    """
+    Format value in binary with `length` leading zeros.
+    E.g., bin_format(0xABC123EFFF, 42)
+    """
+    return f'{integer:0>{length}b}'
+
+def int2hex(val, leading0x=True, nbytes=1):
+    """
+    Pretty print int as hex.
+    @leading0x sets whether a leading '0x' will be included in the formated hex string
+    @nbytes sets the number of (zero-padded) bytes to use in the formated hex string
+    """
+    assert(type(val) == int)
+    if val is not None:
+        hexstr = f'0x{val:0>{nbytes*2}x}' # 1byte = XX, 2bytes = XX XX, etc.
+        if leading0x:
+            return hexstr
+        return hexstr[2:]
 
 ###
 ### Debugging and Custom Error Handlers
@@ -231,6 +250,7 @@ def get_json_uuid():
 
 AssignedNumbers = _UUIDNameMap( get_json_uuid() )
 
+
 ###
 ### Devices & Scanning
 ###
@@ -242,44 +262,59 @@ class Service:
         self.uuid = UUID(uuidVal)
         self.chars = None
         self.descs = None
+        self.handle = self.hndStart
+        # -> for consistency w/ other attribute-type objects (Characteristic, Descriptors), create handle (an alias)
 
     def getCharacteristics(self, forUUID=None):
         if not self.chars: # Unset, or empty
             self.chars = [] if self.hndEnd <= self.hndStart else self.peripheral.getCharacteristics(self.hndStart, self.hndEnd)
+
+        # if forUUID set to a specific UUID, only return the characteristics matching that UUID.
         if forUUID is not None:
             u = UUID(forUUID)
             return [ch for ch in self.chars if ch.uuid==u]
+        # otherwise, return all characteristics
         return self.chars
 
-    def getDescriptors(self, forUUID=None):
+    def getDescriptors(self, forUUID=None, filterUUIDs=True):
         if not self.descs:
             # Grab all descriptors in our range, except for the service
             # declaration descriptor
             all_descs = self.peripheral.getDescriptors(self.hndStart+1, self.hndEnd)
             # Filter out the descriptors for the characteristic properties
             # Note that this does not filter out characteristic value descriptors
-            self.descs = [desc for desc in all_descs if desc.uuid != 0x2803]
+            if filterUUIDs:
+                filtered = []
+                self.descs = [desc for desc in all_descs if desc.uuid != 0x2803]
+                filtered = [str(desc.handle) for desc in all_descs if desc.uuid == 0x2803 ]
+                DBG(f'getDescriptors() filtered {len(all_descs)-len(self.descs)} descriptors w/ uuid 0x2803: {filtered}')
+            else:
+                self.descs = all_descs
+
+        # if forUUID set to a specific UUID, only return the descriptors matching that UUID.
         if forUUID is not None:
             u = UUID(forUUID)
             return [desc for desc in self.descs if desc.uuid == u]
+
+        # otherwise, return all descriptors
         return self.descs
 
     def __str__(self):
-        return f"Srvc <{self.uuid}> <{self.uuid.getShortUUID()}> ({self.uuid.getCommonName()}) / handleStart=0x{self.hndStart:04x} / handleEnd=0x{self.hndEnd:04x}"
+        clsnamestr = 'Service' # 'Srvc'
+        return f"{clsnamestr} <{self.uuid}> <{self.uuid.getShortUUID()}> ({self.uuid.getCommonName()}) / handleStart=0x{self.hndStart:04x} / handleEnd=0x{self.hndEnd:04x}"
 
 class Characteristic:
     # Currently only READ is used in supportsRead function,
     # the rest is included to facilitate supportsXXXX functions if required
-    props = {"BROADCAST":    0b00000001,
-             "READ":         0b00000010,
-             "WRITE_NO_RESP":0b00000100,
-             "WRITE":        0b00001000,
-             "NOTIFY":       0b00010000,
-             "INDICATE":     0b00100000,
-             "WRITE_SIGNED": 0b01000000,
-             "EXTENDED":     0b10000000,
+    props = {"BROADCAST":    0b00000001, # 0x01
+             "READ":         0b00000010, # 0x02
+             "WRITE_NO_RESP":0b00000100, # 0x04
+             "WRITE":        0b00001000, # 0x08
+             "NOTIFY":       0b00010000, # 0x10
+             "INDICATE":     0b00100000, # 0x20
+             "WRITE_SIGNED": 0b01000000, # 0x40
+             "EXTENDED":     0b10000000, # 0x80
     }
-
     propNames = {0b00000001 : "BROADCAST",
                  0b00000010 : "READ",
                  0b00000100 : "WRITE NO RESPONSE",
@@ -302,6 +337,7 @@ class Characteristic:
         return self.peripheral.writeCharacteristic(self.valHandle, val, withResponse)
 
     def getDescriptors(self, forUUID=None, hndEnd=0xFFFF):
+        # If information for the descriptors for this Chracteristic have not been requested, do that now.
         if not self.descs:
             # Descriptors (not counting the value descriptor) begin after
             # the handle for the value descriptor and stop when we reach
@@ -310,15 +346,21 @@ class Characteristic:
             for desc in self.peripheral.getDescriptors(self.valHandle+1, hndEnd):
                 if desc.uuid in (0x2800, 0x2801, 0x2803):
                     # Stop if we reach another characteristic or service
+                    DBG(f'Characteristic getDescriptors() break on {desc.uuid}: {desc}')
                     break
                 self.descs.append(desc)
+
+        # if forUUID set to a specific UUID, only return the descriptors matching that UUID.
         if forUUID is not None:
             u = UUID(forUUID)
             return [desc for desc in self.descs if desc.uuid == u]
+
+        # otherwise, return all descriptors
         return self.descs
 
     def __str__(self):
-        return f"Char <{self.uuid}> <{self.uuid.getShortUUID()}> ({self.uuid.getCommonName()}) / handle=0x{self.handle:04x} / properties=0b{self.properties:08b} ({self.propertiesToString()}) / valHandle=0x{self.valHandle:04x}"
+        clsnamestr = 'Characteristic' # 'Char'
+        return f"{clsnamestr} <{self.uuid}> <{self.uuid.getShortUUID()}> ({self.uuid.getCommonName()}) / handle=0x{self.handle:04x} / properties=0b{self.properties:08b} ({self.propertiesToString()}) / valHandle=0x{self.valHandle:04x}"
 
     def supportsRead(self):
         if (self.properties & Characteristic.props["READ"]):
@@ -336,13 +378,48 @@ class Characteristic:
     def getHandle(self):
         return self.valHandle
 
+
 class Descriptor:
+
     def __init__(self, *args):
         (self.peripheral, uuidVal, self.handle) = args
         self.uuid = UUID(uuidVal)
 
+        # parse declarations to determine properties, value handle, and target UUID.
+        self.val = self.intval = self.properties = self.valHandle = self.charUUID = None
+        if self.uuid in (0x2800, 0x2801, 0x2803):
+            self.val = self.read()
+
+            expectedNumBytes = 5
+            # assert(len(self.val) == expectedNumBytes) # I have not written the following code to parse len(self.val) > 5 bytes...
+            if(len(self.val) == expectedNumBytes):
+                self.intval = int.from_bytes(self.val, byteorder='little')
+                self.properties = self.intval & 0xFF
+                self.valHandle = (self.intval & 0xFFFF00) >> 8
+                self.charUUID = (self.intval & 0xFFFF000000) >> 24
+                # DBG(len(self.val),
+                #     int2hex(self.intval, nbytes=expectedNumBytes),
+                #     int2hex(self.properties, nbytes=expectedNumBytes),
+                #     int2hex(self.valHandle, nbytes=expectedNumBytes),
+                #     int2hex(self.charUUID, nbytes=expectedNumBytes))
+
     def __str__(self):
-        return f"Desc <{self.uuid}> <{self.uuid.getShortUUID()}> ({self.uuid.getCommonName()}) / handle=0x{self.handle:04x}"
+        clsnamestr = 'Descriptor' # 'Desc'
+        s = f"{clsnamestr} <{self.uuid}> <{self.uuid.getShortUUID()}> ({self.uuid.getCommonName()}) / handle={int2hex(self.handle, nbytes=2)}"
+        if self.properties:
+            s += f" / properties=0b{bin_format(self.properties)} ({self.propertiesToString()})"
+        if self.valHandle:
+            s += f" / valHandle={int2hex(self.valHandle, nbytes=2)}"
+        if self.charUUID:
+            s += f" / charUUID={int2hex(self.charUUID, nbytes=2)}"
+        return s
+
+    def propertiesToString(self, delim='|'):
+        props = []
+        for p in Characteristic.propNames:
+           if (p & self.properties):
+               props.append( Characteristic.propNames[p] )
+        return delim.join(props)
 
     def read(self):
         return self.peripheral.readCharacteristic(self.handle)
@@ -407,7 +484,8 @@ class BluepyHelper:
     def _writeCmd(self, cmd):
         if self._helper is None:
             raise BTLEInternalError("Helper not started (did you call connect()?)")
-        DBG("Sent: ", cmd)
+        DBG('')
+        DBG("Sent: ", cmd.strip())
         self._helper.stdin.write(cmd)
         self._helper.stdin.flush()
 
@@ -615,8 +693,7 @@ class Peripheral(BluepyHelper):
         self._writeCmd(cmd + "\n")
         rsp = self._getResp('find')
         nChars = len(rsp['hnd'])
-        return [Characteristic(self, rsp['uuid'][i], rsp['hnd'][i],
-                               rsp['props'][i], rsp['vhnd'][i])
+        return [Characteristic(self, rsp['uuid'][i], rsp['hnd'][i], rsp['props'][i], rsp['vhnd'][i])
                 for i in range(nChars)]
 
     def getDescriptors(self, startHnd=1, endHnd=0xFFFF):
@@ -626,12 +703,14 @@ class Peripheral(BluepyHelper):
         # descriptors in one packet due to the limited size of MTU. So the
         # guest needs to check the response and make retries until all handles
         # are returned.
+        #
         # In bluez 5.25 and later, gatt_discover_desc() in attrib/gatt.c does the retry
         # so bluetooth_helper always returns a full list.
         # This was broken in earlier versions.
         resp = self._getResp('desc')
         ndesc = len(resp['hnd'])
-        return [Descriptor(self, resp['uuid'][i], resp['hnd'][i]) for i in range(ndesc)]
+        return [Descriptor(self, resp['uuid'][i], resp['hnd'][i])
+                for i in range(ndesc)]
 
     def readCharacteristic(self, handle):
         self._writeCmd("rd %X\n" % handle)
