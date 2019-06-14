@@ -877,6 +877,10 @@ class ScanEntry:
         self.scanData = {}
         self.updateCount = 0
 
+    def __str__(self):
+        connectable_string = 'connectable' if self.connectable else 'not connectable'
+        return f'{self.addr} ({self.addrType}) / RSSI={self.rssi} dB / {connectable_string} / {self.getScanData()} / {str(self.rawData)}'
+
     def _update(self, resp):
         addrType = self.addrTypes.get(resp['type'][0], None)
         if (self.addrType is not None) and (addrType != self.addrType):
