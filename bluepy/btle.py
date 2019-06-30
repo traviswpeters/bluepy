@@ -189,7 +189,7 @@ class UUID:
 
     def getVerboseStr(self):
         # complete UUID | short form UUID | decimal value | member specification | name (human-readable)
-        return f"{self} | 0x{self.short} | {self.decVal} | {self.specification} | {self.getCommonName()}"
+        return f"{self} | 0x{self.short} | {self.decVal:5} | {self.specification:20} | {self.getCommonName()}"
 
 
 def capitaliseName(descr):
@@ -215,9 +215,15 @@ class _UUIDNameMap:
         return None
 
     def dumpUUIDs(self):
-        for i, uuid in enumerate(self.idMap):
+        # dump UUIDs sorted by UUID value
+        m = sorted(self.idMap, key=lambda x: str(x))
+        for i, uuid in enumerate(m):
             print(f"{i+1:0>3}: {uuid.getVerboseStr()}")
-        print(f"Total = {len(self.idMap)} Assigned Numbers loaded")
+        print(f"Total = {len(m)} Assigned Numbers loaded")
+
+        # for i, uuid in enumerate(self.idMap):
+        #     print(f"{i+1:0>3}: {uuid.getVerboseStr()}")
+        # print(f"Total = {len(self.idMap)} Assigned Numbers loaded")
 
 def get_json_uuid():
     """
