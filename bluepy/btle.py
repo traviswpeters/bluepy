@@ -254,8 +254,19 @@ def get_json_uuid():
             yield UUID(number, cname, specification=k)
             yield UUID(number, name, specification=k)
 
-AssignedNumbers = _UUIDNameMap( get_json_uuid() )
+def get_json_uuid_as_simple_dict():
+    import json
+    with open(os.path.join(script_path, 'uuids.json'), "rb") as fp:
+        uuid_data = json.loads(fp.read().decode("utf-8"))
 
+    uuid_dict = dict()
+    for k in uuid_data.keys():
+        for number,cname,name in uuid_data[k]:
+            uuid_dict[number] = (k, number, cname, name)
+    return uuid_dict
+
+AssignedNumbers = _UUIDNameMap( get_json_uuid() )
+AssignedNumbers.uuid_dict = get_json_uuid_as_simple_dict()
 
 ###
 ### Devices & Scanning
